@@ -6,7 +6,8 @@
 # -NoPanel      without the performance panel (on by default, F3 hides it while playing)
 # -Console      series-x (the default) or series-s: the console the title takes this PC for
 # -Build        target\diag (the default, the build all measurements are of) or target\release
-# -Machine      auto (the default: by the graphics card), 7900xtx, 4070 or 4090
+# -Machine      auto (the default: by the graphics card), 7900xtx, 4070, 4090 or laptop
+#               (laptop: an NVIDIA PC with 16 GB of RAM and a 6-8 GB card, docs/laptop-16gb.md)
 # -More         other settings: -More @{VICTORY_PANEL='1'} or -More @{VICTORY_AMBIENT='1.0'}
 # On a smaller NVIDIA PC, compare the same Series S scene after a fresh start
 # with one override at a time, e.g. -More @{VICTORY_LAND_THREADS='3'} for
@@ -20,7 +21,7 @@ param(
     [switch]$NoPanel,
     [ValidateSet('series-x', 'series-s')][string]$Console = 'series-x',
     [ValidateSet('diag', 'release')][string]$Build = 'diag',
-    [ValidateSet('auto', '7900xtx', '4070', '4090')][string]$Machine = 'auto',
+    [ValidateSet('auto', '7900xtx', '4070', '4090', 'laptop')][string]$Machine = 'auto',
     [hashtable]$More = @{}
 )
 $settings = @{
@@ -29,6 +30,7 @@ $settings = @{
     VICTORY_TITLE_PRIORITIES = '0'
     VICTORY_SHOW_AFTER = '1'; VICTORY_AMBIENT = '0.8'; VICTORY_D3D12_DRED = 'light'
 }
+$ram = (Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).TotalPhysicalMemory
 if ($Machine -eq 'auto') {
     # Use the existing vendor defaults. The 4070 / 7800X3D profile is explicit.
     $cards = @(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | ForEach-Object { $_.PNPDeviceID })
@@ -71,6 +73,35 @@ if ($Machine -eq '4070') {
         $settings.VICTORY_CARD_WINDOWS_MB = '1024'
     }
 }
+if ($Machine -eq 'laptop') {
+    # i7-13700H, RTX 3050 6 GB Laptop GPU, 16 GB (docs/laptop-16gb.md); asked for explicitly,
+    # the measurements cover that one machine. On top of the NVIDIA settings above, which the
+    # measured runs had: what makes the world load fit in 16 GB. These stay under -Safe too,
+    # since without them the world load runs out of RAM.
+    # Game files read past Windows' file cache, title buffers in its private memory used in
+    # place, windows outside buffers cut on 64 KiB with their tails, and up to 3 GB of them in
+    # the card's memory (Resizable BAR) instead of RAM. The card's own copies of title buffers
+    # get 256 MB, which leaves the card room for those windows.
+    $settings.VICTORY_DSTORAGE_IO = 'direct'; $settings.VICTORY_INPLACE = '2'
+    $settings.VICTORY_WINDOW_KB = '64'; $settings.VICTORY_WINDOW_TAILS = '1'
+    $settings.VICTORY_WINDOWS_BAR_MB = '3072'; $settings.VICTORY_CARD_BUFFERS_MB = '256'
+    $settings.VICTORY_LEVELS_ON_DEMAND = '1'
+    # Host lists are made new instead of used again: a recycled list keeps its command allocator
+    # at the most any recording into it ever took, and the NVIDIA driver's heap held 1.1-1.2 GB
+    # with them against 0.55-0.66 GB without (docs/laptop-16gb.md).
+    $settings.VICTORY_LIST_POOL = '0'
+    # A ceiling on the game's working set: past it Windows trims the game's own pages, not the
+    # rest of the PC's (16 GB: 4,500 MB, which leaves about 11.6 GB for Windows, the memory the
+    # card shares and the desktop; with no ceiling free RAM ran out before the world loaded).
+    if ($ram) {
+        $settings.VICTORY_WORKING_SET_MB = [string][math]::Max(3072, [int64]($ram / 1MB) - 11624)
+    }
+    # A 1080p output drawn at half size by the title's own upscaler: the card stays at about
+    # 4.2 GB of a 5.2 GB budget.
+    $settings.VICTORY_OUTPUT = '1920x1080'; $settings.VICTORY_UPSCALER = '6'; $settings.VICTORY_RENDER_SCALE = '0.5'
+    # No RAM throttle and no change to the title's watchdog here: the world load fits with the
+    # settings above (docs/laptop-16gb.md); for longer sessions see #96 and #126 there.
+}
 # -Safe leaves out every way still on trial, and the newest faster ones.
 if ($Safe) {
     $settings.VICTORY_UNDER_WIDE = '0'; $settings.VICTORY_LAND_ECHO = '0'
@@ -88,9 +119,8 @@ if (-not $Windowed) { $settings.VICTORY_FULLSCREEN = '1' }
 if (-not $NoPanel) { $settings.VICTORY_PANEL = '1' }
 foreach ($k in $More.Keys) { $settings[$k] = $More[$k] }
 
-$ram = (Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).TotalPhysicalMemory
 Write-Host "Settings for the $Machine$(if ($Safe) { ', safe' })$(if ($RayTracing) { ', with ray tracing' })."
-if ($Console -eq 'series-s' -and $Machine -eq '4090') {
+if ($Console -eq 'series-s' -and $Machine -in '4090', 'laptop') {
     Write-Host ("Series S requests {0} list translation threads, {1} for memory updates, and {2} for landing." -f
         $settings.VICTORY_THIN_THREADS, $settings.VICTORY_UNDER_THREADS, $settings.VICTORY_LAND_THREADS)
 }

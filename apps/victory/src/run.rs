@@ -193,6 +193,12 @@ pub fn run(
             println!("renderer port 2: {copies} of {} table copies of the title patched", done.len());
         }
     }
+    // A ceiling on the working set (VICTORY_WORKING_SET_MB, off without it),
+    // before the title touches its memory.
+    #[cfg(windows)]
+    if execute {
+        victory_loader::working_set::apply_asked();
+    }
     // The frame rate (VICTORY_FRAME_INTERVAL_MS, off without it): our frame
     // clock ticks at that interval (victory-gpu), and the title is given
     // the matching rate in place of its setting's 30 (VICTORY_TITLE_FPS
